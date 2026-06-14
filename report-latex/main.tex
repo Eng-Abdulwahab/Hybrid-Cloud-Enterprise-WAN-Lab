@@ -1,0 +1,267 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{geometry}
+\geometry{top=2.5cm, bottom=2.5cm, left=2.5cm, right=2.5cm}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{listings}
+\usepackage{xcolor}
+\usepackage{hyperref}
+
+% Code Style Configuration
+\lstset{
+    backgroundcolor=\color{gray!10},
+    basicstyle=\ttfamily\small,
+    breaklines=true,
+    frame=single,
+    keywordstyle=\color{blue},
+    commentstyle=\color{green!60!black},
+    showstringspaces=false
+}
+
+\title{\textbf{Hybrid Cloud Enterprise WAN Documentation}}
+\author{Created by: \textbf{Abdulwahab Reda}}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\newpage
+\tableofcontents
+\newpage
+
+\section{Introduction}
+This report details the design and setup of an enterprise network built in Cisco Packet Tracer. The network connects a local branch office to a secure Private Cloud environment through a core regional network. 
+
+To secure communication over the public ISP backbone, we deployed a Site-to-Site IPsec VPN tunnel between the Branch and the Cloud. Additionally, Static 1:1 NAT is configured at the Cloud edge to allow direct public access to our internal servers, while internal corporate traffic safely uses the encrypted VPN tunnel.
+
+\section{Network Topology Diagram}
+The network diagram below shows the 4-router setup connecting our local branch VLAN switching network to the remote cloud server farm.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.9\textwidth]{topology.png} 
+    \caption{Enterprise Network Topology Layout}
+    \label{fig:topology}
+\end{figure}
+
+\newpage
+\section{IP Addressing Table}
+We used Variable Length Subnet Masking (VLSM) to design the network subnets and optimize the allocation of IP addresses across all LAN and WAN connections.
+
+\begin{table}[htbp]
+\centering
+\small
+\caption{Network IP Addressing Space}
+\begin{tabular}{lllll}
+\toprule
+\textbf{Device Name} & \textbf{Interface} & \textbf{IP Address} & \textbf{Subnet Mask} & \textbf{Description} \\ \midrule
+\textbf{Branch\_Router} & Gi0/0/0.10 & 192.168.1.1 & 255.255.255.128 & VLAN 10 Gateway (Floor 1) \\
+ & Gi0/0/0.20 & 192.168.1.129 & 255.255.255.192 & VLAN 20 Gateway (Floor 2) \\
+ & Se0/1/0 & 10.1.1.1 & 255.255.255.252 & Serial Link to Hub Router \\ \midrule
+\textbf{Regional\_Hub} & Se0/1/0 & 10.1.1.2 & 255.255.255.252 & Connection to Branch \\
+ & Se0/1/1 & 203.0.113.1 & 255.255.255.252 & Connection to ISP \\ \midrule
+\textbf{ISP\_Router} & Se0/1/0 & 203.0.113.2 & 255.255.255.252 & Connection to Hub \\
+ & Se0/1/1 & 198.51.100.1 & 255.255.255.248 & Connection to Cloud \\ \midrule
+\textbf{Cloud\_Router} & Se0/1/0 & 198.51.100.2 & 255.255.255.248 & WAN Interface (Public) \\
+ & Gi0/0/0 & 172.16.1.1 & 255.255.255.0 & Cloud Inside Gateway \\ \midrule
+\textbf{DNS Server} & NIC & 172.16.1.11 & 255.255.255.0 & Enterprise DNS Host \\
+\textbf{Web Server} & NIC & 172.16.1.10 & 255.255.255.0 & Enterprise Web Host \\ \midrule
+\textbf{PC0 / PC1} & NIC & DHCP Assigned & 255.255.255.128 & Floor 1 Devices \\
+\textbf{PC2 / PC3} & NIC & DHCP Assigned & 255.255.255.192 & Floor 2 Devices \\ \bottomrule
+\end{tabular}
+\end{table}
+
+\section{Implementation Details}
+
+\subsection{VLAN and Switch Configuration}
+To organize the local network and isolate broadcast traffic, we configured VLANs on \textbf{Switch0}:
+\begin{itemize}
+    \item \textbf{VLAN 10 (Floor 1):} Assigned to ports \texttt{Fa0/1} and \texttt{Fa0/2} for the first floor users.
+    \item \textbf{VLAN 20 (Floor 2):} Assigned to ports \texttt{Fa0/3} and \texttt{Fa0/4} for the second floor users.
+    \item \textbf{802.1Q Trunking:} Port \texttt{Fa0/5} is set up as a trunk to pass traffic from both VLANs to the sub-interfaces on the \texttt{Branch\_Router} (Router-on-a-Stick setup).
+\end{itemize}
+On the remote side, \textbf{Switch1} connects the cloud servers together in a flat network environment on \textbf{VLAN 1}.
+
+\subsection{DHCP Setup}
+The \texttt{Branch\_Router} acts as the local DHCP server. We configured two separate pools: \texttt{Floor1\_Pool} and \texttt{Floor2\_Pool} to give dynamic IP configuration parameters to the PCs. Both pools are configured to deliver \texttt{172.16.1.11} as the primary DNS server so branch computers can resolve server names across the network.
+
+\subsection{Static NAT Configuration}
+We deployed \textbf{Static 1:1 NAT} on the \texttt{Cloud\_Router} to map the private cloud server addresses to static public IPs so users can access them externally:
+\begin{itemize}
+    \item Web Server Private IP $172.16.1.10$ maps to Public IP $198.51.100.3$
+    \item DNS Server Private IP $172.16.1.11$ maps to Public IP $198.51.100.4$
+\end{itemize}
+Internal traffic going from the branch to the cloud avoids translation and enters the secure VPN tunnel directly.
+
+\subsection{Site-to-Site IPsec VPN}
+A secure IPsec VPN tunnel protects confidential data passing across the public ISP network between the \texttt{Branch\_Router} ($10.1.1.1$) and the \texttt{Cloud\_Router} ($198.51.100.2$):
+\begin{itemize}
+    \item \textbf{Phase 1 (ISAKMP):} Uses Policy 10 with \textbf{AES encryption}, \textbf{SHA authentication}, and \textbf{Diffie-Hellman Group 2} managed by a static Pre-Shared Key (\texttt{VPN-KEY}).
+    \item \textbf{Phase 2 (IPsec):} Uses a transform-set named \texttt{TSET} with \texttt{esp-aes esp-sha-hmac} parameters.
+    \item \textbf{Traffic Selection:} Access lists (\texttt{ACL 100} and \texttt{ACL 101}) match private traffic between the subnets ($192.168.1.0/24$ and $172.16.1.0/24$), forcing this traffic into the encrypted tunnel.
+\end{itemize}
+
+\newpage
+\section{Device Configuration Scripts}
+
+\subsection{Branch\_Router Configuration}
+\begin{lstlisting}
+ip dhcp pool Floor1_Pool
+ network 192.168.1.0 255.255.255.128
+ default-router 192.168.1.1
+ dns-server 172.16.1.11
+ip dhcp pool Floor2_Pool
+ network 192.168.1.128 255.255.255.192
+ default-router 192.168.1.129
+ dns-server 172.16.1.11
+!
+crypto isakmp policy 10
+ encr aes
+ authentication pre-share
+ group 2
+crypto isakmp key VPN-KEY address 198.51.100.2
+!
+crypto ipsec transform-set TSET esp-aes esp-sha-hmac
+!
+crypto map CMAP 10 ipsec-isakmp 
+ set peer 198.51.100.2
+ set transform-set TSET 
+ match address 100
+!
+interface GigabitEthernet0/0/0.10
+ encapsulation dot1Q 10
+ ip address 192.168.1.1 255.255.255.128
+!
+interface GigabitEthernet0/0/0.20
+ encapsulation dot1Q 20
+ ip address 192.168.1.129 255.255.255.192
+!
+interface Serial0/1/0
+ ip address 10.1.1.1 255.255.255.252
+ crypto map CMAP
+!
+ip route 0.0.0.0 0.0.0.0 10.1.1.2
+access-list 100 permit ip 192.168.1.0 0.0.0.127 172.16.1.0 0.0.0.255
+access-list 100 permit ip 192.168.1.128 0.0.0.63 172.16.1.0 0.0.0.255
+\end{lstlisting}
+
+\subsection{Switch0 Configuration}
+\begin{lstlisting}
+interface FastEthernet0/1
+ switchport access vlan 10
+!
+interface FastEthernet0/2
+ switchport access vlan 10
+!
+interface FastEthernet0/3
+ switchport access vlan 20
+!
+interface FastEthernet0/4
+ switchport access vlan 20
+!
+interface FastEthernet0/5
+ switchport mode trunk
+\end{lstlisting}
+
+\subsection{Regional\_Hub Configuration}
+\begin{lstlisting}
+interface Serial0/1/0
+ ip address 10.1.1.2 255.255.255.252
+!
+interface Serial0/1/1
+ ip address 203.0.113.1 255.255.255.252
+!
+ip route 192.168.1.0 255.255.255.128 10.1.1.1
+ip route 192.168.1.128 255.255.255.192 10.1.1.1
+ip route 172.16.1.0 255.255.255.0 203.0.113.2
+ip route 198.51.100.0 255.255.255.248 203.0.113.2
+\end{lstlisting}
+
+\subsection{ISP\_Router Configuration}
+\begin{lstlisting}
+interface Serial0/1/0
+ ip address 203.0.113.2 255.255.255.252
+!
+interface Serial0/1/1
+ ip address 198.51.100.1 255.255.255.248
+!
+ip route 10.1.1.0 255.255.255.252 203.0.113.1
+ip route 192.168.1.0 255.255.255.128 203.0.113.1
+ip route 192.168.1.128 255.255.255.192 203.0.113.1
+ip route 172.16.1.0 255.255.255.0 198.51.100.2
+\end{lstlisting}
+
+\subsection{Cloud\_Router Configuration}
+\begin{lstlisting}
+crypto isakmp policy 10
+ encr aes
+ authentication pre-share
+ group 2
+crypto isakmp key VPN-KEY address 10.1.1.1
+!
+crypto ipsec transform-set TSET esp-aes esp-sha-hmac
+!
+crypto map CMAP 10 ipsec-isakmp 
+ set peer 10.1.1.1
+ set transform-set TSET 
+ match address 101
+!
+interface GigabitEthernet0/0/0
+ ip address 172.16.1.1 255.255.255.0
+ ip nat inside
+!
+interface Serial0/1/0
+ ip address 198.51.100.2 255.255.255.248
+ ip nat outside
+ crypto map CMAP
+!
+ip nat inside source static 172.16.1.10 198.51.100.3 
+ip nat inside source static 172.16.1.11 198.51.100.4 
+!
+ip route 10.1.1.0 255.255.255.252 198.51.100.1 
+ip route 203.0.113.0 255.255.255.252 198.51.100.1 
+ip route 192.168.1.0 255.255.255.128 198.51.100.1 
+ip route 192.168.1.128 255.255.255.192 198.51.100.1 
+!
+access-list 101 permit ip 172.16.1.0 0.0.0.255 192.168.1.0 0.0.0.127
+access-list 101 permit ip 172.16.1.0 0.0.0.255 192.168.1.128 0.0.0.63
+\end{lstlisting}
+
+\subsection{Switch1 Configuration}
+\begin{lstlisting}
+interface FastEthernet0/1
+ switchport mode access
+\end{lstlisting}
+
+\newpage
+\section{Connectivity Testing and Verification}
+
+\subsection{VPN Status Verification}
+To confirm that the IPsec tunnel is active, we generated traffic and checked the router security status using the command line interface.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{vpn.png}
+    \caption{Crypto ISAKMP SA Output Showing Active Tunnel (QM\_IDLE)}
+    \label{fig:vpn_status}
+\end{figure}
+
+\subsection{End-to-End Routing Test}
+This test confirms connectivity between branch users and remote cloud services using ICMP packets.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{ping.png}
+    \caption{Successful Ping Output From Branch Host to Server Public IP}
+    \label{fig:ping_test}
+\end{figure}
+
+\subsection{Web Server Access Verification}
+This final test verifies the application tier by fetching the default company webpage via the browser client.
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=0.8\textwidth]{web.png}
+    \caption{Company Webpage Loaded Successfully inside PC Browser}
+    \label{fig:web_browser}
+\end{figure}
+
+\end{document}
